@@ -46,3 +46,7 @@ If you use and like Rio, please consider sponsoring it: your support helps to co
 ## Minimal stable rust version
 
 Rio's MSRV is 1.96.1.
+
+## Personal fork: project workspaces
+
+This fork adds named project tabs with declarative panels and a searchable workspace palette. See [setup and validation](docs/workspaces.md), [example configuration](extra/workspaces/config.toml), and [architecture investigation](docs/workspaces-research.md). Workspace commands run only on explicit opening; switching preserves their PTYs.

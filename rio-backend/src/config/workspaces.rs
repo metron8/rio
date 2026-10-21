@@ -187,6 +187,14 @@ command = { program = "cargo", args = ["test", "--locked"] }
         .is_err());
     }
     #[test]
+    fn workspace_example_parses_without_opening_projects() {
+        let config =
+            decode(include_str!("../../../extra/workspaces/config.toml")).unwrap();
+        assert_eq!(config.workspaces.len(), 2);
+        assert_eq!(config.workspaces[0].panels.len(), 3);
+    }
+
+    #[test]
     fn nonexistent_directory_is_deferred_until_open() {
         let config =
             decode(&VALID.replace("~/src/rio", "/no-such-rio-workspace-directory"))

@@ -1,0 +1,36 @@
+# Copy these sections into your config.toml (merge existing bindings/navigation).
+# Change roots to your project directories. No command runs until selection.
+[bindings]
+keys = [
+    { key = "w", with = "super | shift", action = "OpenWorkspacePalette" },
+    # Modifier-free alternative useful for testing:
+    # { key = "F6", action = "OpenWorkspacePalette" },
+]
+
+[navigation]
+mode = "Tab"
+
+[[workspaces]]
+id = "rio"
+name = "Rio Terminal"
+root = "~/src/rio"
+
+# First panel: normal user shell at the project root.
+[[workspaces.panels]]
+
+# Second panel: shell in a project subdirectory, split to the right.
+[[workspaces.panels]]
+working-dir = "frontends/rioterm"
+
+# Third panel: an explicit command, split below the previous panel.
+[[workspaces.panels]]
+split-down = true
+command = { program = "cargo", args = ["test", "-p", "rio-backend", "--locked"] }
+
+[[workspaces]]
+id = "notes"
+name = "Notes"
+root = "~"
+[[workspaces.panels]]
+# Shell constructs must be explicit, for example:
+# command = { program = "/bin/sh", args = ["-c", "printf 'Notes workspace\\n'; exec /bin/sh"] }
