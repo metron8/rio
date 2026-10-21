@@ -63,6 +63,7 @@ const MAX_SEARCH_WHILE_TYPING: Option<usize> = Some(1000);
 const MAX_SEARCH_HISTORY_SIZE: usize = 255;
 
 pub struct Screen<'screen> {
+    workspaces: Vec<rio_backend::config::workspaces::Workspace>,
     bindings: crate::bindings::KeyBindings,
     mouse_bindings: Vec<MouseBinding>,
     pub modifiers: Modifiers,
@@ -120,6 +121,27 @@ impl ChromePress {
         self.at.elapsed() <= crate::constants::MULTI_CLICK_THRESHOLD
             && self.window_origin == window_origin
     }
+}
+
+// Assistant's existing warning card has a fixed width. Wrap workspace paths
+// and spawn diagnostics here so the actionable part isn't clipped offscreen.
+fn workspace_error_message(errors: &[String]) -> String {
+    let message = errors.join("\n");
+    let mut wrapped = String::new();
+    let mut column = 0;
+    for ch in message.chars() {
+        if ch == '\n' {
+            column = 0;
+        } else {
+            if column == 58 {
+                wrapped.push('\n');
+                column = 0;
+            }
+            column += 1;
+        }
+        wrapped.push(ch);
+    }
+    wrapped
 }
 
 pub struct ScreenWindowProperties {
@@ -327,6 +349,7 @@ impl Screen<'_> {
         }
 
         Ok(Screen {
+            workspaces: config.workspaces.clone(),
             search_state: SearchState::default(),
             hint_state: HintState::new(config.hints.alphabet.clone()),
             hints_config: config
@@ -517,6 +540,7 @@ impl Screen<'_> {
         font_library: &rio_backend::sugarloaf::font::FontLibrary,
         should_update_font_library: bool,
     ) {
+        self.workspaces = config.workspaces.clone();
         let num_tabs = self.ctx().len();
         let padding_y_top = padding_top_from_config(
             &config.navigation,
@@ -1464,6 +1488,7 @@ impl Screen<'_> {
                     Act::ToggleAppearanceTheme => {
                         self.context_manager.toggle_appearance_theme();
                     }
+                    Act::OpenWorkspacePalette => self.open_workspace_palette(),
                     Act::OpenCommandPalette => {
                         // One-way "open": the action never closes an
                         // already-visible palette. Users close it via
@@ -1699,6 +1724,92 @@ impl Screen<'_> {
             // Divider displacement is layout, not cursor travel.
             self.renderer.trail_cursor.snap();
         }
+    }
+
+    pub fn open_workspace_palette(&mut self) {
+        use crate::renderer::command_palette::WorkspaceEntry;
+        let opened = self.context_manager.open_workspaces();
+        let mut entries: Vec<_> = self
+            .workspaces
+            .iter()
+            .map(|workspace| WorkspaceEntry {
+                id: workspace.id.clone(),
+                name: workspace.name.clone(),
+                opened: opened.iter().any(|(id, _)| id == &workspace.id),
+            })
+            .collect();
+        // A config edit may remove a recipe without closing its running tab.
+        for (id, name) in opened {
+            if !entries.iter().any(|entry| entry.id == id) {
+                entries.push(WorkspaceEntry {
+                    id,
+                    name,
+                    opened: true,
+                });
+            }
+        }
+        self.renderer.command_palette.enter_workspaces_mode(entries);
+        self.mark_dirty();
+    }
+
+    pub fn open_workspace(&mut self, id: &str, clipboard: &mut Clipboard) {
+        let old_index = self.context_manager.current_index();
+        let errors = if let Some(index) = self.context_manager.workspace_index(id) {
+            self.context_manager.set_current(index);
+            Vec::new()
+        } else if let Some(workspace) = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == id)
+            .cloned()
+        {
+            let result = self.context_manager.open_workspace(&workspace);
+            match result {
+                Ok(launch) => {
+                    for (panel, split_down) in launch.panels {
+                        if split_down {
+                            self.context_manager
+                                .current_grid_mut()
+                                .split_down(panel, &mut self.sugarloaf);
+                        } else {
+                            self.context_manager
+                                .current_grid_mut()
+                                .split_right(panel, &mut self.sugarloaf);
+                        }
+                    }
+                    self.context_manager.select_route_from_current_grid();
+                    launch.errors
+                }
+                Err(error) => vec![error],
+            }
+        } else {
+            vec![format!("Workspace '{id}' is no longer configured")]
+        };
+        self.renderer.command_palette.set_enabled(false);
+        let count = self.context_manager.len();
+        self.resize_top_or_bottom_line(count);
+        self.context_manager
+            .current_grid_mut()
+            .update_dimensions(&mut self.sugarloaf);
+        self.context_manager.switch_context_visibility(
+            &mut self.sugarloaf,
+            old_index,
+            self.context_manager.current_index(),
+        );
+        self.cancel_search(clipboard);
+        self.clear_selection();
+        self.refresh_titles();
+        if !errors.is_empty() {
+            let message = errors.join("\n");
+            tracing::warn!("{message}");
+            self.renderer.assistant.set_error(RioError {
+                level: RioErrorLevel::Warning,
+                report: RioErrorType::InitializationError(workspace_error_message(
+                    &errors,
+                )),
+            });
+        }
+        self.mark_dirty();
     }
 
     pub fn create_tab(&mut self, clipboard: &mut Clipboard) {
@@ -2576,6 +2687,11 @@ impl Screen<'_> {
             scale_factor,
         ) {
             Ok(Some(index)) => {
+                self.renderer.command_palette.selected_index = index;
+                if let Some(id) = self.renderer.command_palette.get_selected_workspace() {
+                    self.open_workspace(&id, clipboard);
+                    return true;
+                }
                 // Clicked a result row — select and execute
                 if let Some(action) = {
                     // Temporarily set selected index to the clicked row
@@ -3770,6 +3886,7 @@ impl Screen<'_> {
     ) {
         use crate::renderer::command_palette::PaletteAction;
         match action {
+            PaletteAction::OpenWorkspacePalette => self.open_workspace_palette(),
             PaletteAction::TabCreate => self.create_tab(clipboard),
             PaletteAction::TabClose => self.close_tab(clipboard),
             PaletteAction::TabCloseUnfocused => {

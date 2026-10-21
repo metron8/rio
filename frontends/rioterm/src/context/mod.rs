@@ -1,5 +1,7 @@
 pub mod renderable;
 pub mod title;
+#[cfg(test)]
+mod workspace_tests;
 
 use crate::ansi::CursorShape;
 use crate::context::title::{update_title, ContextTitle};
@@ -141,6 +143,11 @@ pub struct ContextManager<T: EventListener> {
     event_proxy: T,
     window_id: WindowId,
     pub config: ContextManagerConfig,
+}
+
+pub struct WorkspaceLaunch<T: EventListener> {
+    pub panels: Vec<(Context<T>, bool)>,
+    pub errors: Vec<String>,
 }
 
 /// Display name for the command a pane spawns: the configured program,
@@ -1208,6 +1215,116 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
         let grid = self.contexts.remove(current);
         self.contexts.insert(target, grid);
         self.set_current(target);
+    }
+
+    /// Look up by stable identity, never by a tab index cached outside the grid.
+    pub fn workspace_index(&self, id: &str) -> Option<usize> {
+        self.contexts
+            .iter()
+            .position(|grid| grid.workspace_id.as_deref() == Some(id))
+    }
+
+    pub fn open_workspaces(&self) -> Vec<(String, String)> {
+        self.contexts
+            .iter()
+            .filter_map(|grid| {
+                Some((
+                    grid.workspace_id.clone()?,
+                    grid.custom_title.clone().unwrap_or_default(),
+                ))
+            })
+            .collect()
+    }
+
+    /// Focus an existing tab or launch its recipe once. Remaining panels are
+    /// attached by Screen through the normal layout API. Errors don't roll back
+    /// successful spawns; if all panels fail, no tab/identity is registered.
+    pub fn open_workspace(
+        &mut self,
+        workspace: &rio_backend::config::workspaces::Workspace,
+    ) -> Result<WorkspaceLaunch<T>, String> {
+        if let Some(index) = self.workspace_index(&workspace.id) {
+            self.set_current(index);
+            return Ok(WorkspaceLaunch {
+                panels: Vec::new(),
+                errors: Vec::new(),
+            });
+        }
+        if self.config.is_native {
+            return Err("Workspaces use internal tabs; set [navigation] mode = \"Tab\" instead of NativeTab".into());
+        }
+        if self.contexts.len() >= self.capacity {
+            return Err("Workspace: tab capacity reached; close a tab first".into());
+        }
+        let root = workspace
+            .root_directory()
+            .map_err(|e| format!("Workspace '{}': {e}", workspace.name))?;
+        let mut panels = Vec::new();
+        let mut errors = Vec::new();
+        let dimension = self.current_grid().grid_dimension();
+        let cursor = self.current().cursor_from_ref();
+        let blinking = self.current().renderable_content.has_blinking_enabled;
+        for (index, panel) in workspace.panels.iter().enumerate() {
+            let result = (|| {
+                let directory = rio_backend::config::workspaces::checked_directory(
+                    &root.join(panel.working_dir.as_deref().unwrap_or(".")),
+                )?;
+                let mut config = self.config.clone();
+                config.working_dir = Some(directory.to_string_lossy().into_owned());
+                config.cwd = false;
+                // forkpty currently ignores working_dir and cannot report exec
+                // errors. Use Rio's existing spawn path for workspace panels.
+                #[cfg(not(target_os = "windows"))]
+                {
+                    config.use_fork = false;
+                }
+                config.shell = match &panel.command {
+                    Some(command) => Shell {
+                        program: Some(command.program.clone()),
+                        args: command.args.clone(),
+                    },
+                    // No command means the user's default shell, even if
+                    // this window was initially opened with `rio -e ...`.
+                    None => Shell::default(),
+                };
+                if panel.command.is_some() {
+                    config.shell_integration = false;
+                }
+                Self::create_context(
+                    (&cursor, blinking),
+                    self.event_proxy.clone(),
+                    self.window_id,
+                    next_rich_text_id(),
+                    dimension,
+                    &config,
+                )
+                .map_err(|error| error.to_string())
+            })();
+            match result {
+                Ok(context) => panels.push((context, panel.split_down)),
+                Err(error) => errors.push(format!(
+                    "Workspace '{}', panel {}: {error}",
+                    workspace.name,
+                    index + 1
+                )),
+            }
+        }
+        if panels.is_empty() {
+            return Err(errors.join("\n"));
+        }
+        let (first, _) = panels.remove(0);
+        let mut grid = ContextGrid::new(
+            first,
+            self.current_grid().scaled_margin,
+            self.config.split_color,
+            self.config.split_active_color,
+            self.config.panel,
+        );
+        grid.workspace_id = Some(workspace.id.clone());
+        grid.custom_title = Some(workspace.name.clone());
+        self.contexts.push(grid);
+        self.set_current(self.contexts.len() - 1);
+        Ok(WorkspaceLaunch { panels, errors })
     }
 
     pub fn split(

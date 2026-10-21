@@ -293,6 +293,25 @@ impl Route<'_> {
             Modal::CommandPalette => {
                 if key_event.state == ElementState::Pressed {
                     match &key_event.logical_key {
+                        Key::Character(key)
+                            if key.eq_ignore_ascii_case("v")
+                                && (self.window.screen.modifiers.state().super_key()
+                                    || self
+                                        .window
+                                        .screen
+                                        .modifiers
+                                        .state()
+                                        .control_key()) =>
+                        {
+                            let text = clipboard
+                                .get(rio_backend::clipboard::ClipboardType::Clipboard);
+                            self.window
+                                .screen
+                                .renderer
+                                .command_palette
+                                .append_query(&text);
+                            self.request_overlay_redraw();
+                        }
                         Key::Named(NamedKey::Escape) => {
                             self.window
                                 .screen
@@ -331,6 +350,17 @@ impl Route<'_> {
                             // freely call other `self.window.screen.*`
                             // methods in the match arms without tripping
                             // the borrow checker on nested disjoint borrows.
+                            if let Some(id) = self
+                                .window
+                                .screen
+                                .renderer
+                                .command_palette
+                                .get_selected_workspace()
+                            {
+                                self.window.screen.open_workspace(&id, clipboard);
+                                self.request_overlay_redraw();
+                                return true;
+                            }
                             let selected_font = self
                                 .window
                                 .screen

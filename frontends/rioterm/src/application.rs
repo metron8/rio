@@ -2387,11 +2387,15 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
         // Use the modifiers passed from the menu action
         route.window.screen.set_modifiers(*modifiers);
 
-        // Process the key event
-        route
-            .window
-            .screen
-            .process_key_event(key, &mut self.router.clipboard);
+        // Native menu actions must obey the same overlay gate as physical
+        // keys. Otherwise Paste writes into a live PTY behind the palette.
+        if !route.has_key_wait(key, &mut self.router.clipboard) {
+            route
+                .window
+                .screen
+                .process_key_event(key, &mut self.router.clipboard);
+            route.request_redraw();
+        }
 
         // Restore the original modifiers
         route.window.screen.set_modifiers(original_modifiers);

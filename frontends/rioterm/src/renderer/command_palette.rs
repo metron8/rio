@@ -97,6 +97,7 @@ pub enum PaletteAction {
     /// font list as its contents. Handled by `router`, not
     /// `Screen::execute_palette_action`.
     ListFonts,
+    OpenWorkspacePalette,
     Quit,
 }
 
@@ -228,6 +229,11 @@ const COMMANDS: &[Command] = &[
         action: PaletteAction::ListFonts,
     },
     Command {
+        title: "Open Workspace",
+        shortcut: "",
+        action: PaletteAction::OpenWorkspacePalette,
+    },
+    Command {
         title: "Quit",
         shortcut: "Cmd+Q",
         action: PaletteAction::Quit,
@@ -244,9 +250,17 @@ const COMMANDS: &[Command] = &[
 /// names, and Enter closes the palette (no font-switching action yet).
 /// The list is owned so the filter pass doesn't keep a borrow on the
 /// sugarloaf FontLibrary.
+#[derive(Clone, Debug)]
+pub struct WorkspaceEntry {
+    pub id: String,
+    pub name: String,
+    pub opened: bool,
+}
+
 enum PaletteMode {
     Commands,
     Fonts(Vec<String>),
+    Workspaces(Vec<WorkspaceEntry>),
 }
 
 /// One row in the filtered result list. Variants carry exactly the
@@ -261,6 +275,7 @@ enum PaletteRow<'a> {
     Font {
         family: &'a str,
     },
+    Workspace(&'a WorkspaceEntry),
 }
 
 impl<'a> PaletteRow<'a> {
@@ -268,6 +283,7 @@ impl<'a> PaletteRow<'a> {
         match *self {
             PaletteRow::Command { title, .. } => title,
             PaletteRow::Font { family } => family,
+            PaletteRow::Workspace(entry) => &entry.name,
         }
     }
 
@@ -275,13 +291,20 @@ impl<'a> PaletteRow<'a> {
         match *self {
             PaletteRow::Command { shortcut, .. } => shortcut,
             PaletteRow::Font { .. } => "",
+            PaletteRow::Workspace(entry) => {
+                if entry.opened {
+                    "Open"
+                } else {
+                    ""
+                }
+            }
         }
     }
 
     fn action(&self) -> Option<PaletteAction> {
         match *self {
             PaletteRow::Command { action, .. } => Some(action),
-            PaletteRow::Font { .. } => None,
+            PaletteRow::Font { .. } | PaletteRow::Workspace(_) => None,
         }
     }
 }
@@ -506,6 +529,20 @@ impl CommandPalette {
         self.last_scroll_time = None;
     }
 
+    pub fn enter_workspaces_mode(&mut self, entries: Vec<WorkspaceEntry>) {
+        self.set_enabled(true);
+        self.mode = PaletteMode::Workspaces(entries);
+    }
+
+    pub fn get_selected_workspace(&self) -> Option<String> {
+        self.filtered_rows()
+            .get(self.selected_index)
+            .and_then(|(_, row)| match row {
+                PaletteRow::Workspace(entry) => Some(entry.id.clone()),
+                _ => None,
+            })
+    }
+
     /// Append committed or typed text to the query, applying the
     /// shared overlay input policy (`is_printable_text`) so the key
     /// path and the IME commit path can never drift. Returns whether
@@ -565,7 +602,7 @@ impl CommandPalette {
             .get(self.selected_index)
             .and_then(|(_, row)| match row {
                 PaletteRow::Font { family } => Some((*family).to_owned()),
-                PaletteRow::Command { .. } => None,
+                PaletteRow::Command { .. } | PaletteRow::Workspace(_) => None,
             })
     }
 
@@ -597,6 +634,15 @@ impl CommandPalette {
                     })
                     .collect()
             }
+            PaletteMode::Workspaces(entries) => entries
+                .iter()
+                .filter_map(|entry| {
+                    Some((
+                        fuzzy_score(&self.query, &entry.name)?,
+                        PaletteRow::Workspace(entry),
+                    ))
+                })
+                .collect(),
             PaletteMode::Fonts(fonts) => fonts
                 .iter()
                 .filter_map(|family| {
@@ -721,6 +767,7 @@ impl CommandPalette {
         let placeholder = match self.mode {
             PaletteMode::Commands => "Type a command...",
             PaletteMode::Fonts(_) => "Type a font name...",
+            PaletteMode::Workspaces(_) => "Type a workspace name...",
         };
         let display_text = if self.query.is_empty() {
             placeholder
@@ -920,6 +967,39 @@ impl CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_palette_search_navigation_and_open_marker() {
+        let mut palette = CommandPalette::new();
+        palette.enter_workspaces_mode(vec![
+            WorkspaceEntry {
+                id: "a".into(),
+                name: "Backend".into(),
+                opened: true,
+            },
+            WorkspaceEntry {
+                id: "b".into(),
+                name: "Frontend".into(),
+                opened: false,
+            },
+        ]);
+        assert!(palette.is_enabled());
+        assert_eq!(palette.get_selected_workspace().as_deref(), Some("a"));
+        assert_eq!(palette.filtered_rows()[0].1.shortcut(), "Open");
+        palette.move_selection_down();
+        assert_eq!(palette.get_selected_workspace().as_deref(), Some("b"));
+        palette.move_selection_up();
+        assert_eq!(palette.get_selected_workspace().as_deref(), Some("a"));
+        palette.set_query("frnt".into());
+        assert_eq!(palette.get_selected_workspace().as_deref(), Some("b"));
+        assert_eq!(palette.filtered_rows().len(), 1);
+        assert_eq!(palette.filtered_rows()[0].1.shortcut(), "");
+        palette.set_query("no match".into());
+        assert!(palette.get_selected_workspace().is_none());
+        palette.set_enabled(false);
+        palette.set_enabled(true);
+        assert!(palette.get_selected_workspace().is_none());
+    }
 
     #[test]
     fn test_set_enabled_resets_state() {

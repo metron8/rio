@@ -112,6 +112,8 @@ pub struct ContextGrid<T: EventListener> {
     pub scaled_margin: Margin,
     // custom_title has priority over the active panel's computed title.
     pub custom_title: Option<String>,
+    /// Identity travels with the tab through reordering and is dropped on close.
+    pub workspace_id: Option<String>,
     // custom_color is the tab's background override (tab color picker).
     pub custom_color: Option<[f32; 4]>,
     // bell is set when a pane in this tab rang while the tab was in the
@@ -231,6 +233,7 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
             current: panel_node,
             scaled_margin,
             custom_title: None,
+            workspace_id: None,
             custom_color: None,
             bell: false,
             scale,

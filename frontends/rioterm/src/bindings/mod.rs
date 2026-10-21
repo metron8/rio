@@ -270,6 +270,7 @@ impl From<String> for Action {
             "toggleappearancetheme" => Some(Action::ToggleAppearanceTheme),
             "togglefullscreen" => Some(Action::ToggleFullscreen),
             "opencommandpalette" => Some(Action::OpenCommandPalette),
+            "openworkspacepalette" => Some(Action::OpenWorkspacePalette),
             "none" => Some(Action::None),
             _ => None,
         };
@@ -522,6 +523,8 @@ pub enum Action {
 
     /// Toggle the command palette overlay.
     OpenCommandPalette,
+    /// Browse configured and already-open workspaces.
+    OpenWorkspacePalette,
 
     /// Allow receiving char input.
     ReceiveChar,
@@ -1688,6 +1691,24 @@ mod tests {
         let new_bindings = config_key_bindings(config_bindings, bindings);
         assert_eq!(new_bindings.len(), 1);
         assert_eq!(new_bindings[0].action, Action::Quit);
+    }
+
+    #[test]
+    fn workspace_palette_action_uses_standard_bindings() {
+        let configured = vec![ConfigKeyBinding {
+            key: "w".into(),
+            with: "super | shift".into(),
+            action: "OpenWorkspacePalette".into(),
+            esc: String::new(),
+            mode: String::new(),
+        }];
+        let bindings = config_key_bindings(configured, Vec::new());
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].action, Action::OpenWorkspacePalette);
+        assert_eq!(
+            bindings[0].mods,
+            ModifiersState::SUPER | ModifiersState::SHIFT
+        );
     }
 
     #[test]
