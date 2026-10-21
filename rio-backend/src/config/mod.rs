@@ -14,6 +14,7 @@ pub mod renderer;
 pub mod theme;
 pub mod title;
 pub mod window;
+pub mod workspaces;
 
 use crate::ansi::CursorShape;
 use crate::config::bell::Bell;
@@ -98,6 +99,8 @@ impl Default for Developer {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
+    #[serde(default, deserialize_with = "workspaces::deserialize_workspaces")]
+    pub workspaces: Vec<workspaces::Workspace>,
     #[serde(default)]
     pub cursor: CursorConfig,
     #[serde(default = "Navigation::default")]
@@ -659,6 +662,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            workspaces: Vec::new(),
             cursor: CursorConfig::default(),
             editor: default_editor(),
             adaptive_theme: None,
