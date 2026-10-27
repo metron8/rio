@@ -3887,7 +3887,9 @@ dependencies = [
  "rio-window",
  "serde",
  "sugarloaf",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "toml_edit",
  "tracing",
  "url",
  "wgpu",
@@ -4076,7 +4078,9 @@ dependencies = [
  "sugarloaf",
  "taffy",
  "teletypewriter",
+ "tempfile",
  "tinyvec",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -4959,6 +4963,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

@@ -102,7 +102,7 @@ fn workspace_real_ptys_survive_switching_and_report_partial_spawn_errors() {
     assert!(launch.errors[0].contains("rio-no-such-workspace-command"));
     assert!(launch.errors[1].contains("panel 3"));
     assert_eq!(launch.panels.len(), 1);
-    let extra_pid = launch.panels[0].0.shell_pid;
+    let extra_pid = launch.panels[0].context.shell_pid;
     let pid = cm.current().shell_pid;
     let route = cm.current_route();
     let terminal = Arc::clone(&cm.current().terminal);

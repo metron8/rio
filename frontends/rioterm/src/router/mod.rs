@@ -350,6 +350,24 @@ impl Route<'_> {
                             // freely call other `self.window.screen.*`
                             // methods in the match arms without tripping
                             // the borrow checker on nested disjoint borrows.
+                            if self
+                                .window
+                                .screen
+                                .renderer
+                                .command_palette
+                                .is_saving_workspace()
+                            {
+                                let name = self
+                                    .window
+                                    .screen
+                                    .renderer
+                                    .command_palette
+                                    .query
+                                    .clone();
+                                self.window.screen.save_current_workspace(&name);
+                                self.request_overlay_redraw();
+                                return true;
+                            }
                             if let Some(id) = self
                                 .window
                                 .screen

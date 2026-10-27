@@ -66,6 +66,9 @@ pub struct Context<T: EventListener> {
     /// `{{ program }}` and the empty-title strip fallback without ever
     /// inspecting the foreground process.
     pub spawned_program: String,
+    /// Original argv, before shell-integration injection; never foreground/history.
+    pub launch_command: Option<rio_backend::config::workspaces::WorkspaceCommand>,
+    pub initial_directory: Option<std::path::PathBuf>,
     _io_thread: Option<JoinHandle<(Machine<teletypewriter::Pty, T>, performer::State)>>,
 }
 
@@ -145,8 +148,15 @@ pub struct ContextManager<T: EventListener> {
     pub config: ContextManagerConfig,
 }
 
+pub struct WorkspacePane<T: EventListener> {
+    pub context: Context<T>,
+    pub panel_index: usize,
+    pub split_down: bool,
+    pub split_from: Option<usize>,
+}
 pub struct WorkspaceLaunch<T: EventListener> {
-    pub panels: Vec<(Context<T>, bool)>,
+    pub panels: Vec<WorkspacePane<T>>,
+    pub first_panel_index: usize,
     pub errors: Vec<String>,
 }
 
@@ -208,6 +218,8 @@ pub fn create_dead_context<T: rio_backend::event::EventListener>(
         title: ContextTitle::default(),
         title_dirty: false,
         spawned_program: String::new(),
+        launch_command: None,
+        initial_directory: None,
         _io_thread: None,
     }
 }
@@ -404,6 +416,13 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
             title: ContextTitle::default(),
             title_dirty: false,
             spawned_program: spawned_program_name(config),
+            launch_command: config.shell.program.as_ref().map(|program| {
+                rio_backend::config::workspaces::WorkspaceCommand {
+                    program: program.clone(),
+                    args: config.shell.args.clone(),
+                }
+            }),
+            initial_directory: config.working_dir.as_ref().map(std::path::PathBuf::from),
             _io_thread: io_thread,
         };
         context.title = ContextTitle {
@@ -1236,6 +1255,81 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
             .collect()
     }
 
+    /// Capture launch recipes and live directories without restarting any PTY.
+    pub fn request_config_reload(&self) {
+        self.event_proxy
+            .send_event(RioEvent::PrepareUpdateConfig, self.window_id);
+    }
+
+    pub fn capture_workspace(
+        &self,
+        name: &str,
+    ) -> Result<rio_backend::config::workspaces::Workspace, String> {
+        use rio_backend::config::workspaces::{
+            checked_directory, Workspace, WorkspacePanel,
+        };
+        if name.trim().is_empty() {
+            return Err("Enter a workspace name".into());
+        }
+        let grid = self.current_grid();
+        let steps = grid.workspace_splits()?;
+        let mut directories = Vec::new();
+        for step in &steps {
+            let context = &grid.contexts()[&step.node].val;
+            let reported = context.terminal.lock().current_directory.clone();
+            #[cfg(not(target_os = "windows"))]
+            let live = if *context.main_fd >= 0 {
+                teletypewriter::foreground_process_path(
+                    *context.main_fd,
+                    context.shell_pid,
+                )
+                .ok()
+            } else {
+                None
+            };
+            #[cfg(target_os = "windows")]
+            let live: Option<std::path::PathBuf> = None;
+            let directory = live.or(reported).or_else(|| context.initial_directory.clone())
+                .ok_or("Cannot determine a panel's directory; enable shell integration or wait for the shell prompt")?;
+            directories.push(checked_directory(&directory)?);
+        }
+        let mut root = directories.first().ok_or("The tab has no panels")?.clone();
+        for directory in &directories {
+            while !directory.starts_with(&root) {
+                if !root.pop() {
+                    return Err("Panel directories have no common root".into());
+                }
+            }
+        }
+        let utf8_path = |path: &std::path::Path| {
+            path.to_str()
+                .map(str::to_owned)
+                .ok_or("A panel path is not valid UTF-8".to_string())
+        };
+        let mut panels = Vec::new();
+        for (step, directory) in steps.iter().zip(&directories) {
+            let relative = directory.strip_prefix(&root).map_err(|e| e.to_string())?;
+            panels.push(WorkspacePanel {
+                working_dir: if relative.as_os_str().is_empty() {
+                    None
+                } else {
+                    Some(utf8_path(relative)?)
+                },
+                command: grid.contexts()[&step.node].val.launch_command.clone(),
+                split_down: step.split_down,
+                split_from: step.split_from,
+            });
+        }
+        let workspace = Workspace {
+            id: "draft".into(),
+            name: name.trim().into(),
+            root: utf8_path(&root)?,
+            panels,
+        };
+        workspace.validate()?;
+        Ok(workspace)
+    }
+
     /// Focus an existing tab or launch its recipe once. Remaining panels are
     /// attached by Screen through the normal layout API. Errors don't roll back
     /// successful spawns; if all panels fail, no tab/identity is registered.
@@ -1247,6 +1341,7 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
             self.set_current(index);
             return Ok(WorkspaceLaunch {
                 panels: Vec::new(),
+                first_panel_index: 0,
                 errors: Vec::new(),
             });
         }
@@ -1301,7 +1396,12 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
                 .map_err(|error| error.to_string())
             })();
             match result {
-                Ok(context) => panels.push((context, panel.split_down)),
+                Ok(context) => panels.push(WorkspacePane {
+                    context,
+                    panel_index: index,
+                    split_down: panel.split_down,
+                    split_from: panel.split_from,
+                }),
                 Err(error) => errors.push(format!(
                     "Workspace '{}', panel {}: {error}",
                     workspace.name,
@@ -1312,9 +1412,10 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
         if panels.is_empty() {
             return Err(errors.join("\n"));
         }
-        let (first, _) = panels.remove(0);
+        let first = panels.remove(0);
+        let first_panel_index = first.panel_index;
         let mut grid = ContextGrid::new(
-            first,
+            first.context,
             self.current_grid().scaled_margin,
             self.config.split_color,
             self.config.split_active_color,
@@ -1324,7 +1425,11 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
         grid.custom_title = Some(workspace.name.clone());
         self.contexts.push(grid);
         self.set_current(self.contexts.len() - 1);
-        Ok(WorkspaceLaunch { panels, errors })
+        Ok(WorkspaceLaunch {
+            panels,
+            first_panel_index,
+            errors,
+        })
     }
 
     pub fn split(

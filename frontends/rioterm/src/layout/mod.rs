@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod compute_tests;
+#[cfg(test)]
+mod workspace_tests;
 
 use crate::context::Context;
 use crate::mouse::Mouse;
@@ -126,6 +128,13 @@ pub struct ContextGrid<T: EventListener> {
     tree: TaffyTree<()>,
     root_node: NodeId,
     border_config: BorderConfig,
+}
+
+/// Replay one split of an existing panel, in creation order.
+pub struct WorkspaceSplit {
+    pub node: NodeId,
+    pub split_from: Option<usize>,
+    pub split_down: bool,
 }
 
 pub struct ContextGridItem<T: EventListener> {
@@ -956,6 +965,61 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
     #[inline]
     pub fn contexts(&self) -> &FxHashMap<NodeId, ContextGridItem<T>> {
         &self.inner
+    }
+
+    /// Recover a replayable recipe from the live binary split tree. Unlike
+    /// sorting by screen position, this preserves nested left/right branches.
+    pub fn workspace_splits(&self) -> Result<Vec<WorkspaceSplit>, String> {
+        fn first_leaf<T: EventListener>(
+            grid: &ContextGrid<T>,
+            node: NodeId,
+        ) -> Result<NodeId, String> {
+            if grid.inner.contains_key(&node) {
+                return Ok(node);
+            }
+            let children = grid.tree.children(node).map_err(|e| e.to_string())?;
+            first_leaf(grid, *children.first().ok_or("empty split container")?)
+        }
+        fn walk<T: EventListener>(
+            grid: &ContextGrid<T>,
+            node: NodeId,
+            steps: &mut Vec<WorkspaceSplit>,
+        ) -> Result<(), String> {
+            if grid.inner.contains_key(&node) {
+                return Ok(());
+            }
+            let children = grid.tree.children(node).map_err(|e| e.to_string())?;
+            match children.as_slice() {
+                [child] => walk(grid, *child, steps),
+                [left, right] => {
+                    let source = first_leaf(grid, *left)?;
+                    let target = steps
+                        .iter()
+                        .position(|step| step.node == source)
+                        .ok_or("split source not found")?;
+                    steps.push(WorkspaceSplit {
+                        node: first_leaf(grid, *right)?,
+                        split_from: Some(target),
+                        split_down: grid
+                            .tree
+                            .style(node)
+                            .map_err(|e| e.to_string())?
+                            .flex_direction
+                            == taffy::FlexDirection::Column,
+                    });
+                    walk(grid, *left, steps)?;
+                    walk(grid, *right, steps)
+                }
+                _ => Err("unsupported split container".into()),
+            }
+        }
+        let mut steps = vec![WorkspaceSplit {
+            node: first_leaf(self, self.root_node)?,
+            split_from: None,
+            split_down: false,
+        }];
+        walk(self, self.root_node, &mut steps)?;
+        Ok(steps)
     }
 
     /// Get contexts ordered by visual position (top-to-bottom, left-to-right)

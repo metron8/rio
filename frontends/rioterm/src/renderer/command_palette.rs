@@ -98,6 +98,7 @@ pub enum PaletteAction {
     /// `Screen::execute_palette_action`.
     ListFonts,
     OpenWorkspacePalette,
+    SaveWorkspace,
     Quit,
 }
 
@@ -234,6 +235,11 @@ const COMMANDS: &[Command] = &[
         action: PaletteAction::OpenWorkspacePalette,
     },
     Command {
+        title: "Save Tab as New Workspace",
+        shortcut: "",
+        action: PaletteAction::SaveWorkspace,
+    },
+    Command {
         title: "Quit",
         shortcut: "Cmd+Q",
         action: PaletteAction::Quit,
@@ -261,6 +267,7 @@ enum PaletteMode {
     Commands,
     Fonts(Vec<String>),
     Workspaces(Vec<WorkspaceEntry>),
+    SaveWorkspace,
 }
 
 /// One row in the filtered result list. Variants carry exactly the
@@ -529,6 +536,15 @@ impl CommandPalette {
         self.last_scroll_time = None;
     }
 
+    pub fn enter_save_workspace_mode(&mut self) {
+        self.set_enabled(true);
+        self.mode = PaletteMode::SaveWorkspace;
+    }
+
+    pub fn is_saving_workspace(&self) -> bool {
+        matches!(self.mode, PaletteMode::SaveWorkspace)
+    }
+
     pub fn enter_workspaces_mode(&mut self, entries: Vec<WorkspaceEntry>) {
         self.set_enabled(true);
         self.mode = PaletteMode::Workspaces(entries);
@@ -611,6 +627,7 @@ impl CommandPalette {
     /// identically in either view.
     fn filtered_rows(&self) -> Vec<(i32, PaletteRow<'_>)> {
         let mut results: Vec<(i32, PaletteRow<'_>)> = match &self.mode {
+            PaletteMode::SaveWorkspace => Vec::new(),
             PaletteMode::Commands => {
                 let has_adaptive = self.has_adaptive_theme;
                 COMMANDS
@@ -768,6 +785,7 @@ impl CommandPalette {
             PaletteMode::Commands => "Type a command...",
             PaletteMode::Fonts(_) => "Type a font name...",
             PaletteMode::Workspaces(_) => "Type a workspace name...",
+            PaletteMode::SaveWorkspace => "New workspace name (Enter to save)...",
         };
         let display_text = if self.query.is_empty() {
             placeholder
@@ -967,6 +985,28 @@ impl CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_save_form_owns_text_and_has_no_executable_result() {
+        let mut palette = CommandPalette::new();
+        palette.enter_save_workspace_mode();
+        assert!(palette.is_enabled());
+        assert!(palette.is_saving_workspace());
+        assert!(palette.append_query("Проект Alpha"));
+        assert_eq!(palette.query, "Проект Alpha");
+        assert!(palette.get_selected_action().is_none());
+        assert!(palette.get_selected_workspace().is_none());
+        palette.move_selection_down();
+        assert_eq!(palette.selected_index, 0);
+        palette.set_enabled(false);
+        palette.set_enabled(true);
+        assert!(!palette.is_saving_workspace());
+        palette.set_query("save workspace".into());
+        assert_eq!(
+            palette.get_selected_action(),
+            Some(PaletteAction::SaveWorkspace)
+        );
+    }
 
     #[test]
     fn workspace_palette_search_navigation_and_open_marker() {

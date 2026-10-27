@@ -1488,6 +1488,7 @@ impl Screen<'_> {
                     Act::ToggleAppearanceTheme => {
                         self.context_manager.toggle_appearance_theme();
                     }
+                    Act::SaveWorkspace => self.begin_save_workspace(),
                     Act::OpenWorkspacePalette => self.open_workspace_palette(),
                     Act::OpenCommandPalette => {
                         // One-way "open": the action never closes an
@@ -1726,6 +1727,49 @@ impl Screen<'_> {
         }
     }
 
+    pub fn begin_save_workspace(&mut self) {
+        self.renderer.command_palette.enter_save_workspace_mode();
+        self.mark_dirty();
+    }
+
+    pub fn save_current_workspace(&mut self, name: &str) {
+        let result = (|| {
+            let workspace = self.context_manager.capture_workspace(name)?;
+            let reserved: Vec<_> = self
+                .context_manager
+                .open_workspaces()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            rio_backend::config::workspaces::store::save_new(
+                &rio_backend::config::config_file_path(),
+                workspace,
+                &reserved,
+            )
+        })();
+        match result {
+            Ok(workspace) => {
+                let grid = self.context_manager.current_grid_mut();
+                grid.workspace_id = Some(workspace.id.clone());
+                grid.custom_title = Some(workspace.name.clone());
+                self.workspaces.push(workspace);
+                self.context_manager.request_config_reload();
+                self.renderer.assistant.clear();
+                self.renderer.command_palette.set_enabled(false);
+                self.refresh_titles();
+            }
+            Err(message) => {
+                self.renderer.assistant.set_error(RioError {
+                    level: RioErrorLevel::Warning,
+                    report: RioErrorType::InitializationError(workspace_error_message(
+                        &[message],
+                    )),
+                });
+            }
+        }
+        self.mark_dirty();
+    }
+
     pub fn open_workspace_palette(&mut self) {
         use crate::renderer::command_palette::WorkspaceEntry;
         let opened = self.context_manager.open_workspaces();
@@ -1766,16 +1810,24 @@ impl Screen<'_> {
             let result = self.context_manager.open_workspace(&workspace);
             match result {
                 Ok(launch) => {
-                    for (panel, split_down) in launch.panels {
-                        if split_down {
-                            self.context_manager
-                                .current_grid_mut()
-                                .split_down(panel, &mut self.sugarloaf);
-                        } else {
-                            self.context_manager
-                                .current_grid_mut()
-                                .split_right(panel, &mut self.sugarloaf);
+                    let mut nodes = std::collections::HashMap::new();
+                    nodes.insert(
+                        launch.first_panel_index,
+                        self.context_manager.current_grid().current,
+                    );
+                    for panel in launch.panels {
+                        let grid = self.context_manager.current_grid_mut();
+                        if let Some(source) =
+                            panel.split_from.and_then(|index| nodes.get(&index))
+                        {
+                            grid.current = *source;
                         }
+                        if panel.split_down {
+                            grid.split_down(panel.context, &mut self.sugarloaf);
+                        } else {
+                            grid.split_right(panel.context, &mut self.sugarloaf);
+                        }
+                        nodes.insert(panel.panel_index, grid.current);
                     }
                     self.context_manager.select_route_from_current_grid();
                     launch.errors
@@ -3886,6 +3938,7 @@ impl Screen<'_> {
     ) {
         use crate::renderer::command_palette::PaletteAction;
         match action {
+            PaletteAction::SaveWorkspace => self.begin_save_workspace(),
             PaletteAction::OpenWorkspacePalette => self.open_workspace_palette(),
             PaletteAction::TabCreate => self.create_tab(clipboard),
             PaletteAction::TabClose => self.close_tab(clipboard),

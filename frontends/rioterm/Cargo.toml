@@ -28,6 +28,8 @@ rio-grid = { workspace = true }
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 criterion = { workspace = true }
+tempfile = "3.27.0"
+toml = "0.9.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bitflags = { workspace = true }

@@ -21,6 +21,9 @@ pub struct WorkspacePanel {
     pub command: Option<WorkspaceCommand>,
     /// Split the previously created panel down instead of right.
     pub split_down: bool,
+    /// Zero-based index of an earlier panel to split. Absent means previous.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_from: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -75,6 +78,12 @@ impl Workspace {
             return Err(invalid("at least one panel is required"));
         }
         for (index, panel) in self.panels.iter().enumerate() {
+            if panel.split_from.is_some_and(|target| target >= index) {
+                return Err(invalid(&format!(
+                    "panel {}: split-from must refer to an earlier panel",
+                    index + 1
+                )));
+            }
             if let Some(dir) = &panel.working_dir {
                 if dir.contains('\0')
                     || Path::new(dir)
@@ -122,6 +131,8 @@ pub fn checked_directory(path: &Path) -> Result<PathBuf, String> {
     }
     Ok(directory)
 }
+
+pub mod store;
 
 #[cfg(test)]
 mod tests {
@@ -192,6 +203,18 @@ command = { program = "cargo", args = ["test", "--locked"] }
             decode(include_str!("../../../extra/workspaces/config.toml")).unwrap();
         assert_eq!(config.workspaces.len(), 2);
         assert_eq!(config.workspaces[0].panels.len(), 3);
+    }
+
+    #[test]
+    fn split_source_must_precede_its_panel() {
+        let valid =
+            VALID.replace("split-down = true", "split-down = true\nsplit-from = 0");
+        assert_eq!(
+            decode(&valid).unwrap().workspaces[0].panels[1].split_from,
+            Some(0)
+        );
+        assert!(decode(&valid.replace("split-from = 0", "split-from = 1")).is_err());
+        assert!(decode(&valid.replace("split-from = 0", "split-from = -1")).is_err());
     }
 
     #[test]

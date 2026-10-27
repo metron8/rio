@@ -271,6 +271,7 @@ impl From<String> for Action {
             "togglefullscreen" => Some(Action::ToggleFullscreen),
             "opencommandpalette" => Some(Action::OpenCommandPalette),
             "openworkspacepalette" => Some(Action::OpenWorkspacePalette),
+            "saveworkspace" => Some(Action::SaveWorkspace),
             "none" => Some(Action::None),
             _ => None,
         };
@@ -525,6 +526,8 @@ pub enum Action {
     OpenCommandPalette,
     /// Browse configured and already-open workspaces.
     OpenWorkspacePalette,
+    /// Save the current tab as a new workspace recipe.
+    SaveWorkspace,
 
     /// Allow receiving char input.
     ReceiveChar,
