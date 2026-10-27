@@ -1,0 +1,36 @@
+shell-integration = false
+confirm-before-quit = false
+[shell]
+program = "/bin/zsh"
+args = ["-f"]
+[navigation]
+mode = "Tab"
+hide-if-single = false
+[bell]
+audio = false
+tab-indicator = true
+[window]
+quake-width-percentage = 0.8
+quake-height-percentage = 0.35
+[bindings]
+keys = [
+ {key="F1",action="SearchForward"},
+ {key="F2",action="ToggleViMode"},
+ {key="F4",action="ScrollToPrevPrompt"},
+ {key="F5",action="ScrollToNextPrompt"},
+ {key="F8",action="Copy"},
+ {key="F9",action="CreateTab"},
+ {key="F10",action="SelectNextTab"},
+ {key="F11",action="SelectPrevTab"},
+ {key="F12",action="ToggleQuake"},
+]
+[hints]
+alphabet = "jfkdlsahgurieowpq"
+[[hints.rules]]
+regex = "AUDIT_HINT_[0-9]+"
+action = "Copy"
+binding = {key="F3"}
+[[hints.rules]]
+regex = "/tmp/rio-feature-audit/open-target[.]txt"
+action = "Open"
+binding = {key="F6"}
