@@ -35,6 +35,10 @@ keys = [
 
 Type a name to fuzzy-search; use Up/Down/Tab to select, Enter to open/focus, Escape to dismiss. **Open** marks workspaces already open in this window. Mouse selection and clipboard paste are supported too. The system macOS Paste menu follows the same overlay input routing as physical keys, so it cannot write into a terminal behind the palette.
 
+## Save the current tab
+
+Choose **Save Tab as New Workspace** in the command palette, enter a name and press Enter. The tab stays live and its recipe is saved to the active config. See [capture behavior, split topology and limits](workspace-capture.md). The bindable action is `SaveWorkspace`; it has no default shortcut.
+
 ## Configuration
 
 ```toml

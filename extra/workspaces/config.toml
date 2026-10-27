@@ -3,6 +3,8 @@
 [bindings]
 keys = [
     { key = "w", with = "super | shift", action = "OpenWorkspacePalette" },
+    # Optional save action:
+    # { key = "F7", action = "SaveWorkspace" },
     # Modifier-free alternative useful for testing:
     # { key = "F6", action = "OpenWorkspacePalette" },
 ]
